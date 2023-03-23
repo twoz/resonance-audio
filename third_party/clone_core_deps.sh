@@ -28,7 +28,7 @@ git_clone_if_not_exist () {
 
 cd "${SCRIPT_DIR}"
 # Clone Eigen
-git_clone_if_not_exist "eigen" "https://gitlab.com/libeigen/eigen.git" "master"
+git_clone_if_not_exist "eigen" "https://gitlab.com/libeigen/eigen.git" "3.4"
 # Clone PFFFT
 git_clone_if_not_exist "pffft" "https://bitbucket.org/jpommier/pffft.git" "master"
 

@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <memory>
+#include <future>
 
 #include "base/audio_buffer.h"
 #include "base/constants_and_types.h"
@@ -25,10 +26,14 @@ limitations under the License.
 #include "base/misc_math.h"
 #include "graph/resonance_audio_api_impl.h"
 #include "platforms/common/room_effects_utils.h"
+#include "dsp/fir_filter.h"
+#include "utils/planar_interleaved_conversion.h"
 
 #if !(defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS))
 #include "utils/ogg_vorbis_recorder.h"
 #endif  // !(defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS))
+
+#include "NeuralAcoustics.h"
 
 namespace vraudio {
 namespace unity {
@@ -79,9 +84,111 @@ struct ResonanceAudioSystem {
 #endif  // !(defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS))
 };
 
+class NeuralAcousticsRenderer {
+  public:
+    NeuralAcousticsRenderer(int sampleRate)
+      : m_net(std::make_shared<sdk::NeuralAcoustics>(
+          sdk::createModelApartment1("/home/twozn/dev/spatial-audio-sdk/auxiliary/"))) 
+      {
+        m_irResampler.SetRateAndNumChannels(22500, sampleRate, 2);
+      }
+
+    void process(AudioBuffer& inOut) {
+      const auto length = inOut.num_frames();
+      CHECK_EQ(inOut.num_channels(), 2);
+      // TODO Update only when transform changes?
+      if (updateImpulseResponses() || length != m_fir.samplesPerBuffer) {
+        m_fir.left = std::make_unique<vraudio::FirFilter>(m_ir[0], length);
+        m_fir.right = std::make_unique<vraudio::FirFilter>(m_ir[1], length);
+        m_fir.samplesPerBuffer = length;
+      }
+      // TODO don't allocate
+      AudioBuffer inCopy{2, length};
+      std::copy(inOut[0].begin(), inOut[0].end(), inCopy[0].begin());
+      std::copy(inOut[1].begin(), inOut[1].end(), inCopy[1].begin());
+      inOut.Clear();
+      m_fir.left->Process(inCopy[0], &inOut[0]);
+      m_fir.right->Process(inCopy[1], &inOut[1]);
+    }
+
+    sdk::NeuralAcoustics& net() { return *m_net; }
+
+  private:
+    bool updateImpulseResponses() {
+      constexpr auto kTimeout = std::chrono::milliseconds{10};
+
+      if (updatePredictedSpectrogram(kTimeout)) {
+        torch::Tensor irLeft = spectrogramToImpulseResponse(m_currentSpec[0]);
+        torch::Tensor irRight = spectrogramToImpulseResponse(m_currentSpec[1]);
+        CHECK_EQ(irLeft.size(0), irRight.size(0));
+
+        auto irL = irLeft.accessor<float, 1>();
+        auto irR = irRight.accessor<float, 1>();
+        const auto irLength = irL.size(0);
+        vraudio::AudioBuffer tmpIr{2, static_cast<size_t>(irLength)};
+        auto tmpIrL = tmpIr[0];
+        auto tmpIrR = tmpIr[1];
+        // TODO linear memcpy?
+        for (auto i = 0; i < irLength; ++i) {
+          tmpIrL[i] = irL[i];
+          tmpIrR[i] = irR[i];
+        }
+        m_ir = vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
+        // Resample from 22500 kHz
+        m_irResampler.Process(tmpIr, &m_ir);
+        return true;
+      }
+      return false;
+    }
+
+    bool updatePredictedSpectrogram(std::chrono::milliseconds timeout) {
+      // TODO Terrible hack for now, launch the prediction in a background
+      if (!m_netPending) {
+        m_specFuture = std::async(std::launch::async, [net = m_net]() {
+          return net->predictSpectrogram();
+        });
+        m_netPending = true;
+      }
+      if (m_netPending) {
+        if (auto status = m_specFuture.wait_for(timeout); status == std::future_status::ready) {
+          m_currentSpec = m_specFuture.get();
+          m_netPending = false;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    static torch::Tensor spectrogramToImpulseResponse(const torch::Tensor& spec) {
+      // Random uniform phase
+      constexpr int n_fft = 512;
+      constexpr int64_t win_length = 512;
+      constexpr int64_t hop_length = 128;
+      
+      // Inverse log, the spectrograms net is trained is log(abs(real) + 1e3)
+      // net_wav = get_wave(np.clip(np.exp(net_out)-1e-3, 0.0, 10000.00))
+      // TODO clip?
+      return (spec.exp() - 1e-3).istft(n_fft, hop_length, win_length, torch::hann_window(win_length));
+    }
+
+    std::shared_ptr<sdk::NeuralAcoustics> m_net;
+    std::future<torch::Tensor> m_specFuture;
+    torch::Tensor m_currentSpec;
+    bool m_netPending{false};
+
+    vraudio::AudioBuffer m_ir;
+    vraudio::Resampler m_irResampler;
+    struct {
+      std::unique_ptr<vraudio::FirFilter> left;
+      std::unique_ptr<vraudio::FirFilter> right;
+      size_t samplesPerBuffer{0};
+    } m_fir;
+};
+
 // Singleton |ResonanceAudioSystem| instance to communicate with the internal
 // API.
 static std::shared_ptr<ResonanceAudioSystem> resonance_audio = nullptr;
+static std::shared_ptr<NeuralAcousticsRenderer> neural_renderer = nullptr;
 
 }  // namespace
 
@@ -92,6 +199,7 @@ void Initialize(int sample_rate, size_t num_channels,
   CHECK_GE(frames_per_buffer, 0);
   resonance_audio = std::make_shared<ResonanceAudioSystem>(
       sample_rate, num_channels, frames_per_buffer);
+  neural_renderer = std::make_shared<NeuralAcousticsRenderer>(sample_rate);
 }
 
 void Shutdown() { resonance_audio.reset(); }
@@ -113,6 +221,16 @@ void ProcessListener(size_t num_frames, float* output) {
 
     std::fill(output, output + buffer_size_samples, 0.0f);
   }
+
+  // TODO Cache buffer
+  // vraudio::AudioBuffer planarOutput{2, num_frames};
+  // // Deinterleave
+  // vraudio::PlanarFromInterleaved(output, num_frames, kNumOutputChannels,
+  //  {planarOutput[0].begin(), planarOutput[1].begin()}, num_frames);
+
+  // neural_renderer->process(planarOutput);
+  // // Interleave back
+  // vraudio::FillExternalBuffer(planarOutput, output, num_frames, kNumOutputChannels);
 
 #if !(defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS))
   if (resonance_audio_copy->is_recording_soundfield) {
@@ -157,6 +275,13 @@ void SetListenerTransform(float px, float py, float pz, float qx, float qy,
   if (resonance_audio_copy != nullptr) {
     resonance_audio_copy->api->SetHeadPosition(px, py, pz);
     resonance_audio_copy->api->SetHeadRotation(qx, qy, qz, qw);
+  }
+
+  auto neural_copy = neural_renderer;
+  if (neural_copy) {
+    // TODO Convert quaternion head rotation to the neural acoustics orientation..
+    // Set always forward for now
+    neural_copy->net().setListenerTransform(sdk::NeuralAcoustics::Orientation::Forward, {px, py});
   }
 }
 
@@ -268,6 +393,11 @@ void SetSourceTransform(int id, float px, float py, float pz, float qx,
   if (resonance_audio_copy != nullptr) {
     resonance_audio_copy->api->SetSourcePosition(id, px, py, pz);
     resonance_audio_copy->api->SetSourceRotation(id, qx, qy, qz, qw);
+  }
+  // TODO Support multiple sources
+  auto neural_copy = neural_renderer;
+  if (neural_copy) {
+    neural_copy->net().setSourcePosition({px, py});
   }
 }
 

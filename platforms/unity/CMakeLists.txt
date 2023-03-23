@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (WIN32)
     set(STATIC_LIB_EXT ".lib")
@@ -189,6 +190,24 @@ target_include_directories(audiopluginresonanceaudio PRIVATE ${EIGEN3_INCLUDE_DI
 target_include_directories(audiopluginresonanceaudio PRIVATE ${PFFFT_INCLUDE_DIR}/)
 target_include_directories(audiopluginresonanceaudio PRIVATE ${LIBVORBIS_INCLUDE_DIR})
 target_include_directories(audiopluginresonanceaudio PRIVATE ${LIBOGG_INCLUDE_DIR})
+
+# Neural Acoustics
+set_property(TARGET audiopluginresonanceaudio PROPERTY CXX_STANDARD 17)
+list(APPEND CMAKE_PREFIX_PATH ${PROJECT_SOURCE_DIR}/../libtorch)
+find_package(Torch REQUIRED)
+target_link_libraries(audiopluginresonanceaudio "${TORCH_LIBRARIES}" )
+# TODO Hack, better way to find torch libs at runtime
+target_link_options(audiopluginresonanceaudio PUBLIC "-Wl,-rpath,${PROJECT_SOURCE_DIR}/../libtorch/lib")
+target_link_options(audiopluginresonanceaudio PUBLIC "-Wl,-rpath,${PROJECT_SOURCE_DIR}/../../SDK/build")
+# SDK
+# TODO SDK package
+target_include_directories(
+    audiopluginresonanceaudio
+    PRIVATE
+    ${PROJECT_SOURCE_DIR}/../../SDK/include
+)
+target_link_libraries(audiopluginresonanceaudio ${PROJECT_SOURCE_DIR}/../../SDK/build/libSpatialAudioSDK.so)
+
 if (MSVC)
     target_sources(audiopluginresonanceaudio PUBLIC ${RA_UNITY_SOURCE_DIR}/unity_win.def)
 endif (MSVC)

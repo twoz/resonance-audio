@@ -16,4 +16,7 @@ third_party/WwiseIncludes/
 build/
 install/
 
+# clangd
+.cache/clangd/*
+
 .DS_Store
