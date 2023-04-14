@@ -24,6 +24,7 @@ limitations under the License.
 #include "base/constants_and_types.h"
 #include "base/logging.h"
 #include "base/misc_math.h"
+#include "base/simd_macros.h"
 #include "graph/resonance_audio_api_impl.h"
 #include "platforms/common/room_effects_utils.h"
 #include "dsp/fir_filter.h"
@@ -84,47 +85,66 @@ struct ResonanceAudioSystem {
 #endif  // !(defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS))
 };
 
+
+
 class NeuralAcousticsRenderer {
+    // TODO Static listener/source positions for now
+    static constexpr sdk::Vec2 kListenerPosition = {1.521155, 0.258791};
+    static constexpr sdk::Vec2 kSourcePosition = {-0.478845 -2.241209};
   public:
-    NeuralAcousticsRenderer(int sampleRate)
+    NeuralAcousticsRenderer(int sampleRate, size_t frames_per_buffer)
       : m_net(std::make_shared<sdk::NeuralAcoustics>(
           sdk::createModelApartment1("/home/twozn/dev/spatial-audio-sdk/auxiliary/"))) 
+      , m_fft(frames_per_buffer)
       {
         m_irResampler.SetRateAndNumChannels(22500, sampleRate, 2);
+  
+        m_net->setListenerTransform(sdk::NeuralAcoustics::Forward, kListenerPosition);
+        m_net->setSourcePosition(kSourcePosition);
       }
 
     void process(AudioBuffer& inOut) {
       const auto length = inOut.num_frames();
       CHECK_EQ(inOut.num_channels(), 2);
-      // TODO Update only when transform changes?
-      if (updateImpulseResponses() || length != m_fir.samplesPerBuffer) {
-        m_fir.left = std::make_unique<vraudio::FirFilter>(m_ir[0], length);
-        m_fir.right = std::make_unique<vraudio::FirFilter>(m_ir[1], length);
-        m_fir.samplesPerBuffer = length;
+      // TODO Update only when source/listener transform changes
+      if (updateImpulseResponse()) {
+        // TODO Know the filter size at init time
+        if (!m_firL || !m_firR) {
+          m_firL.reset(new vraudio::PartitionedFftFilter(m_ir.num_frames(), inOut.num_frames(), &m_fft));
+          m_firR.reset(new vraudio::PartitionedFftFilter(m_ir.num_frames(), inOut.num_frames(), &m_fft));
+        }
+        m_firL->SetTimeDomainKernel(m_ir[0]);
+        m_firR->SetTimeDomainKernel(m_ir[1]);
       }
-      // TODO don't allocate
-      AudioBuffer inCopy{2, length};
-      std::copy(inOut[0].begin(), inOut[0].end(), inCopy[0].begin());
-      std::copy(inOut[1].begin(), inOut[1].end(), inCopy[1].begin());
-      inOut.Clear();
-      m_fir.left->Process(inCopy[0], &inOut[0]);
-      m_fir.right->Process(inCopy[1], &inOut[1]);
+
+      if (!m_firL || !m_firR)
+        return;
+
+      static vraudio::AudioBuffer inputFreqBuffer{2, m_fft.GetFftSize()};
+      m_fft.FreqFromTimeDomain(inOut[0], &inputFreqBuffer[0]);
+      m_fft.FreqFromTimeDomain(inOut[1], &inputFreqBuffer[1]);
+
+      m_firL->Filter(inputFreqBuffer[0]);
+      m_firR->Filter(inputFreqBuffer[1]);
+      m_firL->GetFilteredSignal(&inOut[0]);
+      m_firR->GetFilteredSignal(&inOut[1]);
     }
 
     sdk::NeuralAcoustics& net() { return *m_net; }
 
   private:
-    bool updateImpulseResponses() {
-      constexpr auto kTimeout = std::chrono::milliseconds{10};
+    bool updateImpulseResponse() {
+      constexpr auto kTimeout = std::chrono::milliseconds{5};
 
       if (updatePredictedSpectrogram(kTimeout)) {
-        torch::Tensor irLeft = spectrogramToImpulseResponse(m_currentSpec[0]);
-        torch::Tensor irRight = spectrogramToImpulseResponse(m_currentSpec[1]);
-        CHECK_EQ(irLeft.size(0), irRight.size(0));
+        torch::Tensor ir = spectrogramToImpulseResponse(m_currentSpec.squeeze());
 
+        auto irLeft = ir[0];
+        auto irRight = ir[1];
         auto irL = irLeft.accessor<float, 1>();
         auto irR = irRight.accessor<float, 1>();
         const auto irLength = irL.size(0);
+
         vraudio::AudioBuffer tmpIr{2, static_cast<size_t>(irLength)};
         auto tmpIrL = tmpIr[0];
         auto tmpIrR = tmpIr[1];
@@ -133,9 +153,12 @@ class NeuralAcousticsRenderer {
           tmpIrL[i] = irL[i];
           tmpIrR[i] = irR[i];
         }
-        m_ir = vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
+        // TODO Do we need to upsample the impulse response?
+        // Uncomment to enable resampling
+        m_ir = tmpIr; //vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
         // Resample from 22500 kHz
-        m_irResampler.Process(tmpIr, &m_ir);
+        // m_irResampler.ResetState();
+        // m_irResampler.Process(tmpIr, &m_ir);
         return true;
       }
       return false;
@@ -160,15 +183,23 @@ class NeuralAcousticsRenderer {
     }
 
     static torch::Tensor spectrogramToImpulseResponse(const torch::Tensor& spec) {
-      // Random uniform phase
       constexpr int n_fft = 512;
       constexpr int64_t win_length = 512;
       constexpr int64_t hop_length = 128;
-      
+      constexpr float kPi = 3.141592653589f;
+
+      // Random uniform phase <-pi, pi)
+      static torch::Tensor randPhase;
+      if (randPhase.sizes() != spec.sizes())
+        randPhase = torch::rand(spec.sizes()) * 2 * kPi - kPi;
       // Inverse log, the spectrograms net is trained is log(abs(real) + 1e3)
       // net_wav = get_wave(np.clip(np.exp(net_out)-1e-3, 0.0, 10000.00))
       // TODO clip?
-      return (spec.exp() - 1e-3).istft(n_fft, hop_length, win_length, torch::hann_window(win_length));
+      auto specWithPhase = (spec.exp() - 1e-3) * (torch::cos(randPhase) + c10::complex<float>(0, 1) * torch::sin(randPhase));
+      // split into real and imag part the istft() is expecting
+      // TODO use complex
+      specWithPhase = torch::view_as_real(specWithPhase);
+      return specWithPhase.istft(n_fft, hop_length, win_length, torch::hann_window(win_length));
     }
 
     std::shared_ptr<sdk::NeuralAcoustics> m_net;
@@ -178,11 +209,9 @@ class NeuralAcousticsRenderer {
 
     vraudio::AudioBuffer m_ir;
     vraudio::Resampler m_irResampler;
-    struct {
-      std::unique_ptr<vraudio::FirFilter> left;
-      std::unique_ptr<vraudio::FirFilter> right;
-      size_t samplesPerBuffer{0};
-    } m_fir;
+    vraudio::FftManager m_fft;
+    std::unique_ptr<PartitionedFftFilter> m_firL;
+    std::unique_ptr<PartitionedFftFilter> m_firR;
 };
 
 // Singleton |ResonanceAudioSystem| instance to communicate with the internal
@@ -199,7 +228,7 @@ void Initialize(int sample_rate, size_t num_channels,
   CHECK_GE(frames_per_buffer, 0);
   resonance_audio = std::make_shared<ResonanceAudioSystem>(
       sample_rate, num_channels, frames_per_buffer);
-  neural_renderer = std::make_shared<NeuralAcousticsRenderer>(sample_rate);
+  neural_renderer = std::make_shared<NeuralAcousticsRenderer>(sample_rate, frames_per_buffer);
 }
 
 void Shutdown() { resonance_audio.reset(); }
@@ -223,14 +252,14 @@ void ProcessListener(size_t num_frames, float* output) {
   }
 
   // TODO Cache buffer
-  // vraudio::AudioBuffer planarOutput{2, num_frames};
-  // // Deinterleave
-  // vraudio::PlanarFromInterleaved(output, num_frames, kNumOutputChannels,
-  //  {planarOutput[0].begin(), planarOutput[1].begin()}, num_frames);
+  vraudio::AudioBuffer planarOutput{2, num_frames};
+  // Deinterleave
+  vraudio::PlanarFromInterleaved(output, num_frames, kNumOutputChannels,
+   {planarOutput[0].begin(), planarOutput[1].begin()}, num_frames);
 
-  // neural_renderer->process(planarOutput);
-  // // Interleave back
-  // vraudio::FillExternalBuffer(planarOutput, output, num_frames, kNumOutputChannels);
+  neural_renderer->process(planarOutput);
+  // Interleave back
+  vraudio::FillExternalBuffer(planarOutput, output, num_frames, kNumOutputChannels);
 
 #if !(defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS))
   if (resonance_audio_copy->is_recording_soundfield) {
@@ -281,7 +310,8 @@ void SetListenerTransform(float px, float py, float pz, float qx, float qy,
   if (neural_copy) {
     // TODO Convert quaternion head rotation to the neural acoustics orientation..
     // Set always forward for now
-    neural_copy->net().setListenerTransform(sdk::NeuralAcoustics::Orientation::Forward, {px, py});
+    // TODO2 Hardcoded position for now, for testing
+    //neural_copy->net().setListenerTransform(sdk::NeuralAcoustics::Orientation::Forward, {px, py});
   }
 }
 
@@ -397,7 +427,8 @@ void SetSourceTransform(int id, float px, float py, float pz, float qx,
   // TODO Support multiple sources
   auto neural_copy = neural_renderer;
   if (neural_copy) {
-    neural_copy->net().setSourcePosition({px, py});
+    // TODO2 Hardcoded position for now
+    //neural_copy->net().setSourcePosition({px, py});
   }
 }
 
