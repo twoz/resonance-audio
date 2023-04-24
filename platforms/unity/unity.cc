@@ -91,13 +91,14 @@ class NeuralAcousticsRenderer {
     // TODO Static listener/source positions for now
     static constexpr sdk::Vec2 kListenerPosition = {1.521155, 0.258791};
     static constexpr sdk::Vec2 kSourcePosition = {-0.478845 -2.241209};
+
   public:
     NeuralAcousticsRenderer(int sampleRate, size_t frames_per_buffer)
       : m_net(std::make_shared<sdk::NeuralAcoustics>(
-          sdk::createModelApartment1("/home/twozn/dev/spatial-audio-sdk/auxiliary/"))) 
+          sdk::createModelApartment1("/home/pcend/spatial-audio-sdk/auxiliary/")))  // FIXME: path
       , m_fft(frames_per_buffer)
       {
-        m_irResampler.SetRateAndNumChannels(22500, sampleRate, 2);
+        m_irResampler.SetRateAndNumChannels(22050, sampleRate, 2);
   
         m_net->setListenerTransform(sdk::NeuralAcoustics::Forward, kListenerPosition);
         m_net->setSourcePosition(kSourcePosition);
@@ -187,15 +188,19 @@ class NeuralAcousticsRenderer {
       constexpr int64_t win_length = 512;
       constexpr int64_t hop_length = 128;
       constexpr float kPi = 3.141592653589f;
+      static const torch::Tensor mean = torch::jit::load("/home/pcend/spatial-audio-sdk/auxiliary//normalization_data.pt").attr("mean").toTensor();  // FIXME: path
+      static const torch::Tensor std = torch::jit::load("/home/pcend/spatial-audio-sdk/auxiliary//normalization_data.pt").attr("std").toTensor();  // FIXME: path
+
+      auto spec_unnormalized = spec * std + mean;
 
       // Random uniform phase <-pi, pi)
       static torch::Tensor randPhase;
-      if (randPhase.sizes() != spec.sizes())
-        randPhase = torch::rand(spec.sizes()) * 2 * kPi - kPi;
+      if (randPhase.sizes() != spec_unnormalized.sizes())
+        randPhase = torch::rand(spec_unnormalized.sizes()) * 2 * kPi - kPi;
       // Inverse log, the spectrograms net is trained is log(abs(real) + 1e3)
       // net_wav = get_wave(np.clip(np.exp(net_out)-1e-3, 0.0, 10000.00))
       // TODO clip?
-      auto specWithPhase = (spec.exp() - 1e-3) * (torch::cos(randPhase) + c10::complex<float>(0, 1) * torch::sin(randPhase));
+      auto specWithPhase = (spec_unnormalized.exp() - 1e-3) * (torch::cos(randPhase) + c10::complex<float>(0, 1) * torch::sin(randPhase));
       // split into real and imag part the istft() is expecting
       // TODO use complex
       specWithPhase = torch::view_as_real(specWithPhase);
