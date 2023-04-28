@@ -196,9 +196,12 @@ set_property(TARGET audiopluginresonanceaudio PROPERTY CXX_STANDARD 17)
 list(APPEND CMAKE_PREFIX_PATH ${PROJECT_SOURCE_DIR}/../libtorch)
 find_package(Torch REQUIRED)
 target_link_libraries(audiopluginresonanceaudio "${TORCH_LIBRARIES}" )
-# TODO Hack, better way to find torch libs at runtime
+# TODO Hack, find a better way to find libs at runtime
 target_link_options(audiopluginresonanceaudio PUBLIC "-Wl,-rpath,${PROJECT_SOURCE_DIR}/../libtorch/lib")
 target_link_options(audiopluginresonanceaudio PUBLIC "-Wl,-rpath,${PROJECT_SOURCE_DIR}/../../SDK/build")
+# Provide model path to plugin source files
+target_compile_definitions(audiopluginresonanceaudio PUBLIC NEURAL_ACOUSTICS_AUX_DIR="${PROJECT_SOURCE_DIR}/../../auxiliary") 
+
 # SDK
 # TODO SDK package
 target_include_directories(

@@ -91,13 +91,15 @@ class NeuralAcousticsRenderer {
     // TODO Static listener/source positions for now
     static constexpr sdk::Vec2 kListenerPosition = {1.521155, 0.258791};
     static constexpr sdk::Vec2 kSourcePosition = {-0.478845 -2.241209};
+    static constexpr const char* kAuxDirPath = NEURAL_ACOUSTICS_AUX_DIR;
+
   public:
     NeuralAcousticsRenderer(int sampleRate, size_t frames_per_buffer)
       : m_net(std::make_shared<sdk::NeuralAcoustics>(
-          sdk::createModelApartment1("/home/twozn/dev/spatial-audio-sdk/auxiliary/"))) 
+          sdk::createModelApartment1(kAuxDirPath)))  // FIXME: path
       , m_fft(frames_per_buffer)
       {
-        m_irResampler.SetRateAndNumChannels(22500, sampleRate, 2);
+        m_irResampler.SetRateAndNumChannels(22050, sampleRate, 2);
   
         m_net->setListenerTransform(sdk::NeuralAcoustics::Forward, kListenerPosition);
         m_net->setSourcePosition(kSourcePosition);
@@ -107,6 +109,7 @@ class NeuralAcousticsRenderer {
       const auto length = inOut.num_frames();
       CHECK_EQ(inOut.num_channels(), 2);
       // TODO Update only when source/listener transform changes
+      // TODO This currently introduces glitches, need smooth transition to new IR
       if (updateImpulseResponse()) {
         // TODO Know the filter size at init time
         if (!m_firL || !m_firR) {
@@ -153,12 +156,11 @@ class NeuralAcousticsRenderer {
           tmpIrL[i] = irL[i];
           tmpIrR[i] = irR[i];
         }
-        // TODO Do we need to upsample the impulse response?
-        // Uncomment to enable resampling
-        m_ir = tmpIr; //vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
+        // Upsample
+        m_ir = vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
         // Resample from 22500 kHz
-        // m_irResampler.ResetState();
-        // m_irResampler.Process(tmpIr, &m_ir);
+        m_irResampler.ResetState();
+        m_irResampler.Process(tmpIr, &m_ir);
         return true;
       }
       return false;
@@ -187,15 +189,20 @@ class NeuralAcousticsRenderer {
       constexpr int64_t win_length = 512;
       constexpr int64_t hop_length = 128;
       constexpr float kPi = 3.141592653589f;
+      static const auto normalization_data = torch::jit::load(std::filesystem::path{kAuxDirPath} / "normalization_data.pt");
+      static const torch::Tensor mean = normalization_data.attr("mean").toTensor();
+      static const torch::Tensor std = normalization_data.attr("std").toTensor();
+
+      auto spec_unnormalized = spec * std + mean;
 
       // Random uniform phase <-pi, pi)
       static torch::Tensor randPhase;
-      if (randPhase.sizes() != spec.sizes())
-        randPhase = torch::rand(spec.sizes()) * 2 * kPi - kPi;
+      if (randPhase.sizes() != spec_unnormalized.sizes())
+        randPhase = torch::rand(spec_unnormalized.sizes()) * 2 * kPi - kPi;
       // Inverse log, the spectrograms net is trained is log(abs(real) + 1e3)
       // net_wav = get_wave(np.clip(np.exp(net_out)-1e-3, 0.0, 10000.00))
       // TODO clip?
-      auto specWithPhase = (spec.exp() - 1e-3) * (torch::cos(randPhase) + c10::complex<float>(0, 1) * torch::sin(randPhase));
+      auto specWithPhase = (spec_unnormalized.exp() - 1e-3) * (torch::cos(randPhase) + c10::complex<float>(0, 1) * torch::sin(randPhase));
       // split into real and imag part the istft() is expecting
       // TODO use complex
       specWithPhase = torch::view_as_real(specWithPhase);
