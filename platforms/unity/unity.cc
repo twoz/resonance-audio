@@ -91,11 +91,12 @@ class NeuralAcousticsRenderer {
     // TODO Static listener/source positions for now
     static constexpr sdk::Vec2 kListenerPosition = {1.521155, 0.258791};
     static constexpr sdk::Vec2 kSourcePosition = {-0.478845 -2.241209};
+    static constexpr const char* kAuxDirPath = NEURAL_ACOUSTICS_AUX_DIR;
 
   public:
     NeuralAcousticsRenderer(int sampleRate, size_t frames_per_buffer)
       : m_net(std::make_shared<sdk::NeuralAcoustics>(
-          sdk::createModelApartment1("/home/pcend/spatial-audio-sdk/auxiliary/")))  // FIXME: path
+          sdk::createModelApartment1(kAuxDirPath)))  // FIXME: path
       , m_fft(frames_per_buffer)
       {
         m_irResampler.SetRateAndNumChannels(22050, sampleRate, 2);
@@ -108,6 +109,7 @@ class NeuralAcousticsRenderer {
       const auto length = inOut.num_frames();
       CHECK_EQ(inOut.num_channels(), 2);
       // TODO Update only when source/listener transform changes
+      // TODO This currently introduces glitches, need smooth transition to new IR
       if (updateImpulseResponse()) {
         // TODO Know the filter size at init time
         if (!m_firL || !m_firR) {
@@ -154,12 +156,11 @@ class NeuralAcousticsRenderer {
           tmpIrL[i] = irL[i];
           tmpIrR[i] = irR[i];
         }
-        // TODO Do we need to upsample the impulse response?
-        // Uncomment to enable resampling
-        m_ir = tmpIr; //vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
+        // Upsample
+        m_ir = vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
         // Resample from 22500 kHz
-        // m_irResampler.ResetState();
-        // m_irResampler.Process(tmpIr, &m_ir);
+        m_irResampler.ResetState();
+        m_irResampler.Process(tmpIr, &m_ir);
         return true;
       }
       return false;
@@ -188,8 +189,9 @@ class NeuralAcousticsRenderer {
       constexpr int64_t win_length = 512;
       constexpr int64_t hop_length = 128;
       constexpr float kPi = 3.141592653589f;
-      static const torch::Tensor mean = torch::jit::load("/home/pcend/spatial-audio-sdk/auxiliary//normalization_data.pt").attr("mean").toTensor();  // FIXME: path
-      static const torch::Tensor std = torch::jit::load("/home/pcend/spatial-audio-sdk/auxiliary//normalization_data.pt").attr("std").toTensor();  // FIXME: path
+      static const auto normalization_data = torch::jit::load(std::filesystem::path{kAuxDirPath} / "normalization_data.pt");
+      static const torch::Tensor mean = normalization_data.attr("mean").toTensor();
+      static const torch::Tensor std = normalization_data.attr("std").toTensor();
 
       auto spec_unnormalized = spec * std + mean;
 
