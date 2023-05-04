@@ -41,7 +41,11 @@ git_clone_if_not_exist () {
   PATCH=$4
   if [[ ! -d "${TARGET_PATH}" ]] ; then
     git clone -b "${BRANCH}" "${URL}" "${TARGET_PATH}"
-    cd "$TARGET_PATH" && git checkout "${BRANCH}" && patch -p1 < ../patches/"${PATCH}" && cd ..
+    cd "$TARGET_PATH" && git checkout "${BRANCH}"
+    if [[-f ../patches/"${PATCH}"]] ; then
+      patch -p1 < ../patches/"${PATCH}"
+    fi
+    cd ..
   fi
 }
 
