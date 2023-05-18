@@ -96,7 +96,7 @@ class NeuralAcousticsRenderer {
   public:
     NeuralAcousticsRenderer(int sampleRate, size_t frames_per_buffer)
       : m_net(std::make_shared<sdk::NeuralAcoustics>(
-          sdk::createModelApartment1(kAuxDirPath)))  // FIXME: path
+          sdk::createModelApartment1(kAuxDirPath)))
       , m_fft(frames_per_buffer)
       {
         m_irResampler.SetRateAndNumChannels(22050, sampleRate, 2);
@@ -189,20 +189,15 @@ class NeuralAcousticsRenderer {
       constexpr int64_t win_length = 512;
       constexpr int64_t hop_length = 128;
       constexpr float kPi = 3.141592653589f;
-      static const auto normalization_data = torch::jit::load(std::filesystem::path{kAuxDirPath} / "normalization_data.pt");
-      static const torch::Tensor mean = normalization_data.attr("mean").toTensor();
-      static const torch::Tensor std = normalization_data.attr("std").toTensor();
-
-      auto spec_unnormalized = spec * std + mean;
 
       // Random uniform phase <-pi, pi)
       static torch::Tensor randPhase;
-      if (randPhase.sizes() != spec_unnormalized.sizes())
-        randPhase = torch::rand(spec_unnormalized.sizes()) * 2 * kPi - kPi;
+      if (randPhase.sizes() != spec.sizes())
+        randPhase = torch::rand(spec.sizes()) * 2 * kPi - kPi;
       // Inverse log, the spectrograms net is trained is log(abs(real) + 1e3)
       // net_wav = get_wave(np.clip(np.exp(net_out)-1e-3, 0.0, 10000.00))
       // TODO clip?
-      auto specWithPhase = (spec_unnormalized.exp() - 1e-3) * (torch::cos(randPhase) + c10::complex<float>(0, 1) * torch::sin(randPhase));
+      auto specWithPhase = (spec.exp() - 1e-3) * (torch::cos(randPhase) + c10::complex<float>(0, 1) * torch::sin(randPhase));
       // split into real and imag part the istft() is expecting
       // TODO use complex
       specWithPhase = torch::view_as_real(specWithPhase);

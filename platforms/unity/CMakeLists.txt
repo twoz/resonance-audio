@@ -200,7 +200,7 @@ target_link_libraries(audiopluginresonanceaudio "${TORCH_LIBRARIES}" )
 target_link_options(audiopluginresonanceaudio PUBLIC "-Wl,-rpath,${PROJECT_SOURCE_DIR}/../libtorch/lib")
 target_link_options(audiopluginresonanceaudio PUBLIC "-Wl,-rpath,${PROJECT_SOURCE_DIR}/../../SDK/build")
 # Provide model path to plugin source files
-target_compile_definitions(audiopluginresonanceaudio PUBLIC NEURAL_ACOUSTICS_AUX_DIR="${PROJECT_SOURCE_DIR}/../../auxiliary") 
+target_compile_definitions(audiopluginresonanceaudio PUBLIC NEURAL_ACOUSTICS_AUX_DIR="${PROJECT_SOURCE_DIR}/../../auxiliary/net/") 
 
 # SDK
 # TODO SDK package
