@@ -90,7 +90,7 @@ struct ResonanceAudioSystem {
 class NeuralAcousticsRenderer {
     // TODO Static listener/source positions for now
     static constexpr sdk::Vec2 kListenerPosition = {1.521155, 0.258791};
-    static constexpr sdk::Vec2 kSourcePosition = {-0.478845 -2.241209};
+    static constexpr sdk::Vec2 kSourcePosition = {-0.478845, -2.241209};
     static constexpr const char* kAuxDirPath = NEURAL_ACOUSTICS_AUX_DIR;
 
   public:
@@ -99,9 +99,9 @@ class NeuralAcousticsRenderer {
           sdk::createModelApartment1(kAuxDirPath)))
       , m_fft(frames_per_buffer)
       {
-        m_irResampler.SetRateAndNumChannels(22050, sampleRate, 2);
+        m_irResampler.SetRateAndNumChannels(24000, sampleRate, 2);  // FIXME: hardcoded fs
   
-        m_net->setListenerTransform(sdk::NeuralAcoustics::Forward, kListenerPosition);
+        m_net->setListenerPosition(kListenerPosition);
         m_net->setSourcePosition(kSourcePosition);
       }
 
@@ -140,7 +140,7 @@ class NeuralAcousticsRenderer {
       constexpr auto kTimeout = std::chrono::milliseconds{5};
 
       if (updatePredictedSpectrogram(kTimeout)) {
-        torch::Tensor ir = spectrogramToImpulseResponse(m_currentSpec.squeeze());
+        torch::Tensor ir = spectrogramToImpulseResponse(m_currentSpec);
 
         auto irLeft = ir[0];
         auto irRight = ir[1];
@@ -158,7 +158,7 @@ class NeuralAcousticsRenderer {
         }
         // Upsample
         m_ir = vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
-        // Resample from 22500 kHz
+        // Resample from 22050 kHz
         m_irResampler.ResetState();
         m_irResampler.Process(tmpIr, &m_ir);
         return true;
