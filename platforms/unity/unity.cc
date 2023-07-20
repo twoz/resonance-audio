@@ -239,6 +239,23 @@ void Initialize(int sample_rate, size_t num_channels,
 
 void Shutdown() { resonance_audio.reset(); }
 
+struct ApartamentTransform {
+  float x, y, z;
+} apartament_transform;
+
+void GetApartment1Transform(float x, float y, float z,
+        float xScale, float yScale, float zScale,
+        float xRotation, float yRotation, float zRotation) {
+  assert(xScale == 100.f && yScale == 100.f && zScale == 100.f);
+  assert(xRotation == 270.f && yRotation == 0.f && zRotation == 0.f);
+
+  apartament_transform.x = x;
+  apartament_transform.y = y;
+  apartament_transform.z = z;
+
+  return;
+}
+
 void ProcessListener(size_t num_frames, float* output) {
   CHECK(output != nullptr);
 
@@ -304,6 +321,15 @@ void SetListenerStereoSpeakerMode(bool enable_stereo_speaker_mode) {
   }
 }
 
+void Unity2NAFTransform(const float xUnity, const float yUnity, const float zUnity, float &xNAF, float &yNAF) {
+  float xSize = 0.f;
+  float xUnityRel = xUnity - apartament_transform.x;
+  float yUnityRel = yUnity - apartament_transform.y;
+  float zUnityRel = zUnity - apartament_transform.z;
+  xNAF = xSize * xUnityRel/abs(xUnityRel) - xUnityRel;
+  yNAF = zUnityRel;
+}
+
 void SetListenerTransform(float px, float py, float pz, float qx, float qy,
                           float qz, float qw) {
   auto resonance_audio_copy = resonance_audio;
@@ -316,8 +342,9 @@ void SetListenerTransform(float px, float py, float pz, float qx, float qy,
   if (neural_copy) {
     // TODO Convert quaternion head rotation to the neural acoustics orientation..
     // Set always forward for now
-    // TODO2 Hardcoded position for now, for testing
-    //neural_copy->net().setListenerTransform(sdk::NeuralAcoustics::Orientation::Forward, {px, py});
+    float xNAF, yNAF;
+    Unity2NAFTransform(px, py, pz, xNAF, yNAF);
+    // neural_copy->net().setListenerTransform(sdk::NeuralAcoustics::Orientation::Forward, {xNAF, yNAF});
   }
 }
 
@@ -433,8 +460,9 @@ void SetSourceTransform(int id, float px, float py, float pz, float qx,
   // TODO Support multiple sources
   auto neural_copy = neural_renderer;
   if (neural_copy) {
-    // TODO2 Hardcoded position for now
-    //neural_copy->net().setSourcePosition({px, py});
+    float xNAF, yNAF;
+    Unity2NAFTransform(px, py, pz, xNAF, yNAF);
+    // neural_copy->net().setSourcePosition({xNAF, yNAF});
   }
 }
 

@@ -33,6 +33,8 @@ void Shutdown();
 // This method must be called from the audio thread.
 void ProcessListener(size_t num_frames, float* output);
 
+void Unity2NAFTransform(const float xUnity, const float yUnity, const float zUnity, float &xNAF, float &yNAF);
+
 // Updates the listener's position and rotation.
 void SetListenerTransform(float px, float py, float pz, float qx, float qy,
                           float qz, float qw);
@@ -88,6 +90,10 @@ void SetSourceTransform(ResonanceAudioApi::SourceId id, float px, float py,
 
 // NOTE: all exported symbols must be added to "unity_android.lds".
 extern "C" {
+
+void EXPORT_API GetApartment1Transform(float x, float y, float z,
+        float xScale, float yScale, float zScale,
+        float xRotation, float yRotation, float zRotation);
 
 // Updates the listener's master gain.
 void EXPORT_API SetListenerGain(float gain);
