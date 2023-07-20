@@ -240,7 +240,7 @@ void Initialize(int sample_rate, size_t num_channels,
 void Shutdown() { resonance_audio.reset(); }
 
 struct ApartamentTransform {
-  float x, y, z;
+  float x{0.f}, y{0.f}, z{0.f};
 } apartament_transform;
 
 void GetApartment1Transform(float x, float y, float z,
@@ -322,12 +322,15 @@ void SetListenerStereoSpeakerMode(bool enable_stereo_speaker_mode) {
 }
 
 void Unity2NAFTransform(const float xUnity, const float yUnity, const float zUnity, float &xNAF, float &yNAF) {
-  float xSize = 0.f;
+  float xMax = 8.141758f;
+  float xMin = -2.5994487f; // min and max values hardcoded, should be provided by NAF
+  float xSize = abs(xMax - xMin); 
   float xUnityRel = xUnity - apartament_transform.x;
   float yUnityRel = yUnity - apartament_transform.y;
   float zUnityRel = zUnity - apartament_transform.z;
   xNAF = xSize * xUnityRel/abs(xUnityRel) - xUnityRel;
   yNAF = zUnityRel;
+  return;
 }
 
 void SetListenerTransform(float px, float py, float pz, float qx, float qy,
