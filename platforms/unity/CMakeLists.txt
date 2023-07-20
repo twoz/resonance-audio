@@ -209,7 +209,11 @@ target_include_directories(
     PRIVATE
     ${PROJECT_SOURCE_DIR}/../../SDK/include
 )
-target_link_libraries(audiopluginresonanceaudio ${PROJECT_SOURCE_DIR}/../../SDK/build/libSpatialAudioSDK.so)
+if (APPLE)
+    target_link_libraries(audiopluginresonanceaudio ${PROJECT_SOURCE_DIR}/../../SDK/build/libSpatialAudioSDK.dylib)
+else ()
+    target_link_libraries(audiopluginresonanceaudio ${PROJECT_SOURCE_DIR}/../../SDK/build/libSpatialAudioSDK.so)
+endif ()
 
 if (MSVC)
     target_sources(audiopluginresonanceaudio PUBLIC ${RA_UNITY_SOURCE_DIR}/unity_win.def)

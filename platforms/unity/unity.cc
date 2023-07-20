@@ -90,7 +90,7 @@ struct ResonanceAudioSystem {
 class NeuralAcousticsRenderer {
     // TODO Static listener/source positions for now
     static constexpr sdk::Vec2 kListenerPosition = {1.521155, 0.258791};
-    static constexpr sdk::Vec2 kSourcePosition = {-0.478845 -2.241209};
+    static constexpr sdk::Vec2 kSourcePosition = {-0.478845, -2.241209};
     static constexpr const char* kAuxDirPath = NEURAL_ACOUSTICS_AUX_DIR;
 
   public:
@@ -99,9 +99,9 @@ class NeuralAcousticsRenderer {
           sdk::createModelApartment1(kAuxDirPath)))
       , m_fft(frames_per_buffer)
       {
-        m_irResampler.SetRateAndNumChannels(22050, sampleRate, 2);
+        m_irResampler.SetRateAndNumChannels(24000, sampleRate, 1);  // FIXME: hardcoded fs
   
-        m_net->setListenerTransform(sdk::NeuralAcoustics::Forward, kListenerPosition);
+        m_net->setListenerPosition(kListenerPosition);
         m_net->setSourcePosition(kSourcePosition);
       }
 
@@ -117,7 +117,7 @@ class NeuralAcousticsRenderer {
           m_firR.reset(new vraudio::PartitionedFftFilter(m_ir.num_frames(), inOut.num_frames(), &m_fft));
         }
         m_firL->SetTimeDomainKernel(m_ir[0]);
-        m_firR->SetTimeDomainKernel(m_ir[1]);
+        m_firR->SetTimeDomainKernel(m_ir[0]);
       }
 
       if (!m_firL || !m_firR)
@@ -140,25 +140,29 @@ class NeuralAcousticsRenderer {
       constexpr auto kTimeout = std::chrono::milliseconds{5};
 
       if (updatePredictedSpectrogram(kTimeout)) {
-        torch::Tensor ir = spectrogramToImpulseResponse(m_currentSpec.squeeze());
+        torch::Tensor irTensor = spectrogramToImpulseResponse(m_currentSpec);
 
-        auto irLeft = ir[0];
-        auto irRight = ir[1];
-        auto irL = irLeft.accessor<float, 1>();
-        auto irR = irRight.accessor<float, 1>();
-        const auto irLength = irL.size(0);
+        auto irAccessor = irTensor.accessor<float, 1>();
+        const auto irLength = irAccessor.size(0);
 
-        vraudio::AudioBuffer tmpIr{2, static_cast<size_t>(irLength)};
-        auto tmpIrL = tmpIr[0];
-        auto tmpIrR = tmpIr[1];
+        std::cout << "ir length: " << irLength << std::endl;
+
+        // TODO Temporary normalization, due to different scaling in simulated dataset
+        const auto min = irTensor.min();
+        const auto max = irTensor.max();
+        const auto targetMin = -1;
+        const auto targetMax = 1;
+        irTensor = (targetMax - targetMin) * (irTensor - min) / (max - min) + targetMin;
+        std::cout << "min max: "<< irTensor.min() << " " << irTensor.max();
+
+        vraudio::AudioBuffer tmpIr{1, static_cast<size_t>(irLength)};
         // TODO linear memcpy?
         for (auto i = 0; i < irLength; ++i) {
-          tmpIrL[i] = irL[i];
-          tmpIrR[i] = irR[i];
+          tmpIr[0][i] = irAccessor[i];
         }
         // Upsample
-        m_ir = vraudio::AudioBuffer(2, m_irResampler.GetMaxOutputLength(irLength));
-        // Resample from 22500 kHz
+        m_ir = vraudio::AudioBuffer(1, m_irResampler.GetMaxOutputLength(irLength));
+        // Resample from 22050 kHz
         m_irResampler.ResetState();
         m_irResampler.Process(tmpIr, &m_ir);
         return true;
@@ -235,6 +239,23 @@ void Initialize(int sample_rate, size_t num_channels,
 
 void Shutdown() { resonance_audio.reset(); }
 
+struct ApartamentTransform {
+  float x{0.f}, y{0.f}, z{0.f};
+} apartament_transform;
+
+void GetApartment1Transform(float x, float y, float z,
+        float xScale, float yScale, float zScale,
+        float xRotation, float yRotation, float zRotation) {
+  assert(xScale == 100.f && yScale == 100.f && zScale == 100.f);
+  assert(xRotation == 270.f && yRotation == 0.f && zRotation == 0.f);
+
+  apartament_transform.x = x;
+  apartament_transform.y = y;
+  apartament_transform.z = z;
+
+  return;
+}
+
 void ProcessListener(size_t num_frames, float* output) {
   CHECK(output != nullptr);
 
@@ -300,6 +321,18 @@ void SetListenerStereoSpeakerMode(bool enable_stereo_speaker_mode) {
   }
 }
 
+void Unity2NAFTransform(const float xUnity, const float yUnity, const float zUnity, float &xNAF, float &yNAF) {
+  float xMax = 8.141758f;
+  float xMin = -2.5994487f; // min and max values hardcoded, should be provided by NAF
+  float xSize = abs(xMax - xMin); 
+  float xUnityRel = xUnity - apartament_transform.x;
+  float yUnityRel = yUnity - apartament_transform.y;
+  float zUnityRel = zUnity - apartament_transform.z;
+  xNAF = xSize * xUnityRel/abs(xUnityRel) - xUnityRel;
+  yNAF = zUnityRel;
+  return;
+}
+
 void SetListenerTransform(float px, float py, float pz, float qx, float qy,
                           float qz, float qw) {
   auto resonance_audio_copy = resonance_audio;
@@ -312,8 +345,9 @@ void SetListenerTransform(float px, float py, float pz, float qx, float qy,
   if (neural_copy) {
     // TODO Convert quaternion head rotation to the neural acoustics orientation..
     // Set always forward for now
-    // TODO2 Hardcoded position for now, for testing
-    //neural_copy->net().setListenerTransform(sdk::NeuralAcoustics::Orientation::Forward, {px, py});
+    float xNAF, yNAF;
+    Unity2NAFTransform(px, py, pz, xNAF, yNAF);
+    // neural_copy->net().setListenerTransform(sdk::NeuralAcoustics::Orientation::Forward, {xNAF, yNAF});
   }
 }
 
@@ -429,8 +463,9 @@ void SetSourceTransform(int id, float px, float py, float pz, float qx,
   // TODO Support multiple sources
   auto neural_copy = neural_renderer;
   if (neural_copy) {
-    // TODO2 Hardcoded position for now
-    //neural_copy->net().setSourcePosition({px, py});
+    float xNAF, yNAF;
+    Unity2NAFTransform(px, py, pz, xNAF, yNAF);
+    // neural_copy->net().setSourcePosition({xNAF, yNAF});
   }
 }
 
