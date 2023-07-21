@@ -22,6 +22,7 @@ using System.IO;
 [CustomEditor(typeof(ResonanceAudioListener))]
 public class ResonanceAudioListenerEditor : Editor {
   private SerializedProperty globalGainDb = null;
+  private SerializedProperty enableSpatialAudioSDK = null;
   private SerializedProperty occlusionMask = null;
   private SerializedProperty stereoSpeakerModeEnabled = null;
   private SerializedProperty recorderFoldout = null;
@@ -41,6 +42,7 @@ public class ResonanceAudioListenerEditor : Editor {
 
   void OnEnable() {
     globalGainDb = serializedObject.FindProperty("globalGainDb");
+    enableSpatialAudioSDK = serializedObject.FindProperty("enableSpatialAudioSDK");
     occlusionMask = serializedObject.FindProperty("occlusionMask");
     stereoSpeakerModeEnabled = serializedObject.FindProperty("stereoSpeakerModeEnabled");
     recorderFoldout = serializedObject.FindProperty("recorderFoldout");
@@ -58,6 +60,10 @@ public class ResonanceAudioListenerEditor : Editor {
     EditorGUI.BeginDisabledGroup(true);
     EditorGUILayout.ObjectField ("Script", script, typeof(MonoScript), false);
     EditorGUI.EndDisabledGroup();
+
+    EditorGUILayout.Separator();
+
+    EditorGUILayout.PropertyField(enableSpatialAudioSDK);
 
     EditorGUILayout.Separator();
 

@@ -24,6 +24,9 @@ using System.Collections.Generic;
 [RequireComponent(typeof(AudioListener))]
 [ExecuteInEditMode]
 public class ResonanceAudioListener : MonoBehaviour {
+  [Tooltip("")]
+  public bool enableSpatialAudioSDK = true;
+
   /// Global gain in decibels to be applied to the processed output.
   [Tooltip("Sets the global gain for all spatialized audio sources. Can be used to adjust the " +
            "overall output volume.")]
@@ -50,6 +53,7 @@ public class ResonanceAudioListener : MonoBehaviour {
 
   /// Is currently recording soundfield?
   public bool IsRecording { get; private set; }
+
 
 #pragma warning disable 0414  // private variable assigned but is never used.
   // Denotes whether the soundfield recorder foldout should be expanded.

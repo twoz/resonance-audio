@@ -66,6 +66,7 @@ public static class ResonanceAudio {
     occlusionMaskValue = listener.occlusionMask.value;
     SetListenerGain(ConvertAmplitudeFromDb(listener.globalGainDb));
     SetListenerStereoSpeakerMode(listener.stereoSpeakerModeEnabled);
+    SetEnableSpatialAudioSDK(listener.enableSpatialAudioSDK);
   }
 
   /// Disables the room effects.
@@ -420,6 +421,9 @@ public static class ResonanceAudio {
 #else
   private const string pluginName = "audiopluginresonanceaudio";
 #endif  // !UNITY_EDITOR && UNITY_IOS
+
+  [DllImport(pluginName)]
+  private static extern void SetEnableSpatialAudioSDK(bool enable);
 
   // Listener handlers.
   [DllImport(pluginName)]

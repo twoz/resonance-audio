@@ -224,6 +224,7 @@ class NeuralAcousticsRenderer {
 // API.
 static std::shared_ptr<ResonanceAudioSystem> resonance_audio = nullptr;
 static std::shared_ptr<NeuralAcousticsRenderer> neural_renderer = nullptr;
+std::atomic_bool g_enable_neural_renderer = true;
 
 }  // namespace
 
@@ -274,15 +275,16 @@ void ProcessListener(size_t num_frames, float* output) {
     std::fill(output, output + buffer_size_samples, 0.0f);
   }
 
-  // TODO Cache buffer
-  vraudio::AudioBuffer planarOutput{2, num_frames};
-  // Deinterleave
-  vraudio::PlanarFromInterleaved(output, num_frames, kNumOutputChannels,
-   {planarOutput[0].begin(), planarOutput[1].begin()}, num_frames);
+  if (g_enable_neural_renderer) {
+    // TODO Cache buffer
+    vraudio::AudioBuffer planarOutput{2, num_frames};
+    // Deinterleave
+    vraudio::PlanarFromInterleaved(output, num_frames, kNumOutputChannels,
+    {planarOutput[0].begin(), planarOutput[1].begin()}, num_frames);
 
-  neural_renderer->process(planarOutput);
-  // Interleave back
-  vraudio::FillExternalBuffer(planarOutput, output, num_frames, kNumOutputChannels);
+    neural_renderer->process(planarOutput);
+    vraudio::FillExternalBuffer(planarOutput, output, num_frames, kNumOutputChannels);
+  }
 
 #if !(defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS))
   if (resonance_audio_copy->is_recording_soundfield) {
@@ -530,6 +532,10 @@ bool StopSoundfieldRecorderAndWriteToFile(const char* file_path,
   return true;
 }
 #endif  // !(defined(PLATFORM_ANDROID) || defined(PLATFORM_IOS))
+
+void EXPORT_API SetEnableSpatialAudioSDK(bool enabled) {
+  g_enable_neural_renderer = enabled;
+}
 
 }  // namespace unity
 }  // namespace vraudio

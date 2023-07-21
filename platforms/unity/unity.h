@@ -112,6 +112,8 @@ bool EXPORT_API StartSoundfieldRecorder();
 bool EXPORT_API StopSoundfieldRecorderAndWriteToFile(const char* file_path,
                                                      bool seamless);
 
+void EXPORT_API SetEnableSpatialAudioSDK(bool enabled);
+
 }  // extern C
 
 }  // namespace unity
