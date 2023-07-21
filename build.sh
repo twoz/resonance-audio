@@ -66,6 +66,7 @@ do
   case $i in
     -p=*|--profile=*)
       PROFILE="${i#*=}"
+      CONFIG_FLAGS+=(-DCMAKE_BUILD_TYPE=${PROFILE})
       shift # past argument=value
       ;;
 
