@@ -45,8 +45,16 @@ public static class ResonanceAudio {
   private static Transform listenerTransform = null;
 
 #if UNITY_EDITOR
-  /// Default audio mixer group of the renderer.
-  public static AudioMixerGroup MixerGroup {
+    public static void UpdateApartament1Transform(float x, float y, float z,
+          float xScale, float yScale, float zScale,
+          float xRotation, float yRotation, float zRotation)
+    {
+        GetApartment1Transform(x, y, z,
+            xScale, yScale, zScale, xRotation, yRotation, zRotation);
+    }
+
+    /// Default audio mixer group of the renderer.
+    public static AudioMixerGroup MixerGroup {
     get {
       if (mixerGroup == null) {
         AudioMixer mixer = (Resources.Load("ResonanceAudioMixer") as AudioMixer);
@@ -421,8 +429,13 @@ public static class ResonanceAudio {
 #else
   private const string pluginName = "audiopluginresonanceaudio";
 #endif  // !UNITY_EDITOR && UNITY_IOS
+    [DllImport(pluginName)]
+    private static extern void GetApartment1Transform(float x, float y, float z,
+          float xScale, float yScale, float zScale,
+          float xRotation, float yRotation, float zRotation);
 
-  [DllImport(pluginName)]
+
+    [DllImport(pluginName)]
   private static extern void SetEnableSpatialAudioSDK(bool enable);
 
   // Listener handlers.
