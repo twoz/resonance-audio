@@ -91,7 +91,7 @@ void SetSourceTransform(ResonanceAudioApi::SourceId id, float px, float py,
 // NOTE: all exported symbols must be added to "unity_android.lds".
 extern "C" {
 
-void EXPORT_API GetApartment1Transform(float x, float y, float z,
+void EXPORT_API SetApartment1Transform(float x, float y, float z,
         float xScale, float yScale, float zScale,
         float xRotation, float yRotation, float zRotation);
 

@@ -49,7 +49,7 @@ public static class ResonanceAudio {
           float xScale, float yScale, float zScale,
           float xRotation, float yRotation, float zRotation)
     {
-        GetApartment1Transform(x, y, z,
+        SetApartment1Transform(x, y, z,
             xScale, yScale, zScale, xRotation, yRotation, zRotation);
     }
 
@@ -430,7 +430,7 @@ public static class ResonanceAudio {
   private const string pluginName = "audiopluginresonanceaudio";
 #endif  // !UNITY_EDITOR && UNITY_IOS
     [DllImport(pluginName)]
-    private static extern void GetApartment1Transform(float x, float y, float z,
+    private static extern void SetApartment1Transform(float x, float y, float z,
           float xScale, float yScale, float zScale,
           float xRotation, float yRotation, float zRotation);
 
