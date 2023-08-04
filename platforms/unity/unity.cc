@@ -244,7 +244,7 @@ struct ApartamentTransform {
   float x{0.f}, y{0.f}, z{0.f};
 } apartament_transform;
 
-void GetApartment1Transform(float x, float y, float z,
+void SetApartment1Transform(float x, float y, float z,
         float xScale, float yScale, float zScale,
         float xRotation, float yRotation, float zRotation) {
   assert(xScale == 100.f && yScale == 100.f && zScale == 100.f);
